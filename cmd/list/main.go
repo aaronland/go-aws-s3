@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"github.com/aaronland/datasize"
 	"github.com/aaronland/go-aws-s3"
 	"log"
 )
@@ -11,6 +13,7 @@ func main() {
 
 	dsn := flag.String("dsn", "", "...")
 	timings := flag.Bool("timings", false, "")
+	gt := flag.String("gt", "", "")
 
 	flag.Parse()
 
@@ -23,8 +26,26 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var sz datasize.ByteSize
+
+	if *gt != "" {
+
+		err := sz.UnmarshalText([]byte(*gt))
+
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	max_size := sz.Bytes()
+
 	list_cb := func(obj *s3.S3Object) error {
-		log.Printf("%s\t%v\n", obj.Key, obj.LastModified)
+
+		if max_size > 0 && uint64(obj.Size) <= max_size {
+			return nil
+		}
+
+		fmt.Println(obj)
 		return nil
 	}
 

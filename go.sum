@@ -1,3 +1,5 @@
+github.com/aaronland/datasize v0.0.0-20171227191756-4eba002a5eae h1:cm9NJkyxbhwXON3H+LQZ1/DpJCTNZUELclno+/XXD8Y=
+github.com/aaronland/datasize v0.0.0-20171227191756-4eba002a5eae/go.mod h1:SuN3h/oaqNQZXICIHUujZ+JvevYIIzF8GC88tqRkNj0=
 github.com/aaronland/go-aws-session v0.0.4 h1:GddU3E4pXAm3JWVjcdgyYhdGaWSRtiZl6Iwwt7+OLcU=
 github.com/aaronland/go-aws-session v0.0.4/go.mod h1:1OD+6F7D052nJMkz2tLx5FvMVpreAVU0ye9ur5O+nno=
 github.com/aaronland/go-string v0.1.1 h1:btdr18owWCBN14ojKx3p+PBCKfm9qIggYEguPLUb2wE=

@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -40,11 +41,21 @@ type S3ListOptions struct {
 }
 
 type S3Object struct {
-	KeyRaw       string // what aws-sdk-go returns
-	Key          string // KeyRaw but with S3Connection.prefix removed
-	Size         int64
-	LastModified time.Time
-	ETag         string
+	KeyRaw       string    `json:"key_raw"` // what aws-sdk-go returns
+	Key          string    `json:"key"`     // KeyRaw but with S3Connection.prefix removed
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"lastmodified"`
+	ETag         string    `json:"etag"`
+}
+
+func (obj *S3Object) String() string {
+
+	return strings.Join([]string{
+		obj.Key,
+		strconv.FormatInt(obj.Size, 10),
+		obj.LastModified.Format(time.RFC3339),
+		obj.ETag,
+	}, "\t")
 }
 
 type S3ListCallback func(*S3Object) error
@@ -109,6 +120,17 @@ func (conn *S3Connection) URI(key string) string {
 	}
 
 	return fmt.Sprintf("https://s3.amazonaws.com/%s/%s", conn.bucket, key)
+}
+
+func (conn *S3Connection) Exists(ctx context.Context, key string) (bool, error) {
+
+	_, err := conn.Head(ctx, key)
+
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // https://tools.ietf.org/html/rfc7231#section-4.3.2
@@ -243,9 +265,63 @@ func (conn *S3Connection) Delete(ctx context.Context, key string) error {
 	}
 
 	_, err := conn.service.DeleteObject(params)
+	return err
+}
 
-	if err != nil {
-		return err
+func (conn *S3Connection) DeleteKeysIfExists(ctx context.Context, keys ...string) error {
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done_ch := make(chan bool)
+	err_ch := make(chan error)
+
+	remaining := len(keys)
+
+	for _, key := range keys {
+
+		go func(ctx context.Context, key string) {
+
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				// pass
+			}
+
+			defer func() {
+				done_ch <- true
+			}()
+
+			ok, err := conn.Exists(ctx, key)
+
+			if err != nil {
+				err_ch <- err
+				return
+			}
+
+			if !ok {
+				return
+			}
+
+			err = conn.Delete(ctx, key)
+
+			if err != nil {
+				err_ch <- err
+			}
+
+		}(ctx, key)
+	}
+
+	for remaining > 0 {
+		select {
+		case <-done_ch:
+			remaining -= 1
+		case err := <-err_ch:
+			return err
+		default:
+			// pass
+		}
 	}
 
 	return nil
@@ -397,11 +473,15 @@ func (conn *S3Connection) List(ctx context.Context, cb S3ListCallback, opts *S3L
 				}
 			}
 
+			etag := *aws_obj.ETag
+			etag = strings.TrimLeft(etag, "\"")
+			etag = strings.TrimRight(etag, "\"")
+
 			obj := &S3Object{
 				KeyRaw:       key_raw,
 				Key:          key,
 				Size:         *aws_obj.Size,
-				ETag:         *aws_obj.ETag,
+				ETag:         etag,
 				LastModified: *aws_obj.LastModified,
 			}
 
@@ -455,7 +535,7 @@ func (conn *S3Connection) List(ctx context.Context, cb S3ListCallback, opts *S3L
 
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#example_S3_ListObjects_shared00
 
-	err := conn.service.ListObjectsPages(params, aws_cb)
+	err := conn.service.ListObjectsPagesWithContext(ctx, params, aws_cb)
 
 	if err != nil {
 		return err
