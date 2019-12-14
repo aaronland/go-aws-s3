@@ -260,12 +260,12 @@ func (conn *S3Connection) DeleteRecursive(ctx context.Context, path string) erro
 	cb := func(obj *S3Object) error {
 
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			return nil
 		default:
 			// pass
 		}
-		
+
 		if obj.Key == path {
 			return nil
 		}
@@ -287,12 +287,12 @@ func (conn *S3Connection) SetACLForBucket(ctx context.Context, acl string, opts 
 	cb := func(obj *S3Object) error {
 
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			return nil
 		default:
 			// pass
 		}
-		
+
 		err := conn.SetACLForKey(ctx, obj.Key, acl)
 		return err
 	}
@@ -365,8 +365,6 @@ func (conn *S3Connection) List(ctx context.Context, cb S3ListCallback, opts *S3L
 		// Delimiter: "baz",
 	}
 
-	log.Println(params)
-	
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#ListObjectsOutput
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#Object
 
@@ -442,12 +440,10 @@ func (conn *S3Connection) List(ctx context.Context, cb S3ListCallback, opts *S3L
 			case e := <-err_ch:
 				log.Println(e)
 
-				/*
-					if opts.Strict {
-						ok = false
-						break
-					}
-				*/
+				if opts.Strict {
+					ok = false
+					break
+				}
 
 			default:
 				// pass

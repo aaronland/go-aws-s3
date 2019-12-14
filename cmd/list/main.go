@@ -3,20 +3,20 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
 	"github.com/aaronland/go-aws-s3"
+	"log"
 )
 
 func main() {
 
 	dsn := flag.String("dsn", "", "...")
 	timings := flag.Bool("timings", false, "")
-	
+
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	conn, err := s3.NewS3ConnectionWithDSN(*dsn)
 
 	if err != nil {
@@ -30,7 +30,7 @@ func main() {
 
 	list_opts := s3.DefaultS3ListOptions()
 	list_opts.Timings = *timings
-	
+
 	err = conn.List(ctx, list_cb, list_opts)
 
 	if err != nil {
