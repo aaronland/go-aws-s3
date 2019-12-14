@@ -114,7 +114,7 @@ func (conn *S3Connection) URI(key string) string {
 // https://tools.ietf.org/html/rfc7231#section-4.3.2
 // https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html
 
-func (conn *S3Connection) Head(key string) (*s3.HeadObjectOutput, error) {
+func (conn *S3Connection) Head(ctx context.Context, key string) (*s3.HeadObjectOutput, error) {
 
 	key = conn.prepareKey(key)
 
@@ -132,7 +132,7 @@ func (conn *S3Connection) Head(key string) (*s3.HeadObjectOutput, error) {
 	return rsp, nil
 }
 
-func (conn *S3Connection) Get(key string) (io.ReadCloser, error) {
+func (conn *S3Connection) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 
 	key = conn.prepareKey(key)
 
@@ -150,9 +150,9 @@ func (conn *S3Connection) Get(key string) (io.ReadCloser, error) {
 	return rsp.Body, nil
 }
 
-func (conn *S3Connection) GetBytes(key string) ([]byte, error) {
+func (conn *S3Connection) GetBytes(ctx context.Context, key string) ([]byte, error) {
 
-	fh, err := conn.Get(key)
+	fh, err := conn.Get(ctx, key)
 
 	if err != nil {
 		return nil, err
@@ -160,13 +160,10 @@ func (conn *S3Connection) GetBytes(key string) ([]byte, error) {
 
 	defer fh.Close()
 
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(fh)
-
-	return buf.Bytes(), nil
+	return ioutil.ReadAll(fh)
 }
 
-func (conn *S3Connection) Put(key string, fh io.ReadCloser, args ...interface{}) error {
+func (conn *S3Connection) Put(ctx context.Context, key string, fh io.ReadCloser, args ...interface{}) error {
 
 	// file under known knowns: AWS expects a ReadSeeker for performance
 	// and memory reasons but we're passing around ReadClosers  - see also:
@@ -228,15 +225,15 @@ func (conn *S3Connection) Put(key string, fh io.ReadCloser, args ...interface{})
 	return err
 }
 
-func (conn *S3Connection) PutBytes(key string, body []byte) error {
+func (conn *S3Connection) PutBytes(ctx context.Context, key string, body []byte) error {
 
 	br := bytes.NewReader(body)
 	fh := ioutil.NopCloser(br)
 
-	return conn.Put(key, fh)
+	return conn.Put(ctx, key, fh)
 }
 
-func (conn *S3Connection) Delete(key string) error {
+func (conn *S3Connection) Delete(ctx context.Context, key string) error {
 
 	key = conn.prepareKey(key)
 
@@ -254,7 +251,7 @@ func (conn *S3Connection) Delete(key string) error {
 	return nil
 }
 
-func (conn *S3Connection) DeleteRecursive(path string) error {
+func (conn *S3Connection) DeleteRecursive(ctx context.Context, path string) error {
 
 	opts := DefaultS3ListOptions()
 	// opts.Timings = *timings
@@ -262,34 +259,48 @@ func (conn *S3Connection) DeleteRecursive(path string) error {
 
 	cb := func(obj *S3Object) error {
 
+		select {
+		case <- ctx.Done():
+			return nil
+		default:
+			// pass
+		}
+		
 		if obj.Key == path {
 			return nil
 		}
 
-		return conn.DeleteRecursive(obj.Key)
+		return conn.DeleteRecursive(ctx, obj.Key)
 	}
 
-	err := conn.List(cb, opts)
+	err := conn.List(ctx, cb, opts)
 
 	if err != nil {
 		return err
 	}
 
-	return conn.Delete(path)
+	return conn.Delete(ctx, path)
 }
 
-func (conn *S3Connection) SetACLForBucket(acl string, opts *S3ListOptions) error {
+func (conn *S3Connection) SetACLForBucket(ctx context.Context, acl string, opts *S3ListOptions) error {
 
 	cb := func(obj *S3Object) error {
 
-		err := conn.SetACLForKey(obj.Key, acl)
+		select {
+		case <- ctx.Done():
+			return nil
+		default:
+			// pass
+		}
+		
+		err := conn.SetACLForKey(ctx, obj.Key, acl)
 		return err
 	}
 
-	return conn.List(cb, opts)
+	return conn.List(ctx, cb, opts)
 }
 
-func (conn *S3Connection) SetACLForKey(key string, acl string) error {
+func (conn *S3Connection) SetACLForKey(ctx context.Context, key string, acl string) error {
 
 	key = conn.prepareKey(key)
 
@@ -303,7 +314,7 @@ func (conn *S3Connection) SetACLForKey(key string, acl string) error {
 	return err
 }
 
-func (conn *S3Connection) List(cb S3ListCallback, opts *S3ListOptions) error {
+func (conn *S3Connection) List(ctx context.Context, cb S3ListCallback, opts *S3ListOptions) error {
 
 	count_pages := int64(0)
 	count_items := int64(0)
@@ -354,6 +365,8 @@ func (conn *S3Connection) List(cb S3ListCallback, opts *S3ListOptions) error {
 		// Delimiter: "baz",
 	}
 
+	log.Println(params)
+	
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#ListObjectsOutput
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#Object
 
@@ -361,7 +374,7 @@ func (conn *S3Connection) List(cb S3ListCallback, opts *S3ListOptions) error {
 
 		atomic.AddInt64(&count_pages, 1)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		done_ch := make(chan bool)
@@ -455,12 +468,12 @@ func (conn *S3Connection) List(cb S3ListCallback, opts *S3ListOptions) error {
 	return nil
 }
 
-func (conn *S3Connection) HasChanged(key string, local []byte) (bool, error) {
+func (conn *S3Connection) HasChanged(ctx context.Context, key string, local []byte) (bool, error) {
 
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#HeadObjectInput
 	// https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#HeadObjectOutput
 
-	head, err := conn.Head(key)
+	head, err := conn.Head(ctx, key)
 
 	if err != nil {
 
@@ -489,12 +502,6 @@ func (conn *S3Connection) HasChanged(key string, local []byte) (bool, error) {
 
 	return true, nil
 }
-
-/*
-func IsNotFound(err error) bool {
-	return util.IsAWSErrorWithCode(err, s3.ErrCodeNoSuchKey)
-}
-*/
 
 func (conn *S3Connection) prepareKey(key string) string {
 
